@@ -1,0 +1,62 @@
+CREATE OR REPLACE procedure create_pricelist(numeric)
+	LANGUAGE 'plpgsql'
+	as $$
+	declare
+		d integer;
+		p integer;
+		pr integer;
+	begin
+		select id into d from pricelist where date = (select max(date) from pricelist);
+		insert into pricelist (id, director, name, date) select d+1, director, name, current_timestamp from pricelist where date=(select max(date) from pricelist);
+		
+		for pr in (select product from product_in_pricelist where 
+		pricelist=d) loop
+		
+			select price into p from product_in_pricelist
+			where pricelist = d and product = pr::integer;
+			insert into product_in_pricelist values(
+				pr, d+1, round(p*(1+$1/100.0), -1));
+		end loop;
+	end;
+	$$;
+	
+	CREATE OR REPLACE procedure add_product(art integer, c integer, mer integer default null, n varchar default null, cert varchar default null, pack varchar default null, man varchar default null)
+	LANGUAGE 'plpgsql'
+	as $$
+	declare
+	begin
+		if not exists (select articul from product where articul=art) then
+			insert into product values(
+				art, mer, n, cert, pack, man, c);
+		else
+			update product set count = count+c where articul = art;
+			if mer!=null then
+				update product set merchandiser = mer where articul = art;
+			end if;
+			if n is not null then
+				update product set name = n where articul = art;
+			end if;
+			if cert is not null then
+				update product set certificate = cert where articul = art;
+			end if;
+			if pack is not null then
+				update product set package = pack where articul = art;
+			end if;
+			if man is not null then
+				update product set manufacturer = man where articul = art;
+			end if;
+		end if;
+	end;
+	$$;
+	
+	select* from product;
+	
+	call add_product (5, 10, 2, 'd', 'a', 'a', 'a');
+	
+	
+	delete from product_in_pricelist where pricelist=9;
+	delete from pricelist where id=9;
+	alter table pricelist
+	alter column date set not null
+	
+	update pricelist set date=current_timestamp where id=8
