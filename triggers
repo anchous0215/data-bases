@@ -1,0 +1,202 @@
+CREATE OR REPLACE FUNCTION buyer_insert_trigger_fnc()
+  	RETURNS trigger AS $$
+	DECLARE
+		pos INTEGER;
+	BEGIN
+		select code INTO pos FROM POSITION WHERE name='manager';
+		IF NOT EXISTS (select employer FROM EMPLOYER_TABLE WHERE position=pos and employer=NEW.manager)
+			THEN RAISE EXCEPTION 'EMPLOYER IS NOT MANAGER';
+		end if;
+		RETURN NEW;
+	END;
+	$$
+LANGUAGE 'plpgsql';
+
+CREATE OR REPLACE TRIGGER buyer_insert_trigger
+  	BEFORE INSERT ON BUYER
+  	FOR EACH ROW EXECUTE PROCEDURE buyer_insert_trigger_fnc();
+	
+	
+	
+CREATE OR REPLACE FUNCTION individual_insert_trigger_fnc()
+  	RETURNS trigger AS $$
+	BEGIN
+		IF NOT EXISTS (select id FROM BUYER WHERE category=false AND id=NEW.id)
+			THEN RAISE EXCEPTION 'BUYER IS NOT INDIVIDUAL';
+		end if;
+		RETURN NEW;
+	END;
+	$$
+LANGUAGE 'plpgsql';
+
+CREATE OR REPLACE TRIGGER individual_insert_trigger
+  	BEFORE INSERT ON INDIVIDUAL
+  	FOR EACH ROW EXECUTE PROCEDURE individual_insert_trigger_fnc();
+	
+	
+	
+CREATE OR REPLACE FUNCTION entity_insert_trigger_fnc()
+  	RETURNS trigger AS $$
+	BEGIN
+		IF NOT EXISTS (select id FROM BUYER WHERE category=true AND id=NEW.id)
+			THEN RAISE EXCEPTION 'BUYER IS NOT ENTITY';
+		end if;
+		RETURN NEW;
+	END;
+	$$
+LANGUAGE 'plpgsql';
+
+CREATE OR REPLACE TRIGGER entity_insert_trigger
+  	BEFORE INSERT ON ENTITY
+  	FOR EACH ROW EXECUTE PROCEDURE entity_insert_trigger_fnc();
+  
+  
+  
+
+CREATE OR REPLACE FUNCTION pricelist_insert_trigger_fnc()
+  	RETURNS trigger AS $$
+	DECLARE
+		prev INTEGER;
+		pos INTEGER;
+	BEGIN
+		select code INTO pos FROM POSITION WHERE name='director';
+		IF NOT EXISTS (select employer FROM EMPLOYER_TABLE WHERE position=pos and employer=NEW.director)
+			THEN RAISE EXCEPTION 'EMPLOYER IS NOT DIRECTOR';
+		end if;
+		prev:=0;
+		select id INTO prev FROM PRICELIST WHERE name=NEW.name and date=(select max(date) from PRICELIST where name=NEW.name);
+		if prev!=0
+			then NEW.previous:=prev;
+		end if;
+		RETURN NEW;
+	END;
+	$$
+LANGUAGE 'plpgsql';
+
+CREATE TRIGGER pricelist_insert_trigger
+  	BEFORE INSERT ON PRICELIST
+  	FOR EACH ROW EXECUTE PROCEDURE pricelist_insert_trigger_fnc();
+	
+	
+	
+CREATE OR REPLACE FUNCTION consignment_insert_trigger_fnc()
+  	RETURNS trigger AS $$
+	DECLARE
+		pr INTEGER;
+		pos INTEGER;
+	BEGIN
+		IF NOT EXISTS (select id FROM INDIVIDUAL WHERE id=NEW.buyer) and
+		NOT EXISTS (select id FROM ENTITY WHERE id=NEW.buyer) 
+			THEN RAISE EXCEPTION 'BUYER NOT EXISTS';
+		end if;
+		IF NEW.merchandiser is not null THEN
+			select code INTO pos FROM POSITION WHERE name='merchandiser';
+			IF NOT EXISTS (select employer FROM EMPLOYER_TABLE WHERE position=pos and employer=NEW.merchandiser)
+				THEN RAISE EXCEPTION 'EMPLOYER IS NOT MERCHANDISER';
+			END IF;
+		END IF;
+		select code INTO pos FROM POSITION WHERE name='manager';
+		IF NOT EXISTS (select employer FROM EMPLOYER_TABLE WHERE position=pos and employer=NEW.manager)
+			THEN RAISE EXCEPTION 'EMPLOYER IS NOT MANAGER';
+		END IF;
+		RETURN NEW;
+	END;
+	$$
+LANGUAGE 'plpgsql';
+
+CREATE TRIGGER consignment_insert_trigger
+  	BEFORE INSERT ON CONSIGNMENT
+  	FOR EACH ROW EXECUTE PROCEDURE consignment_insert_trigger_fnc();
+
+
+
+CREATE OR REPLACE FUNCTION product_insert_trigger_fnc()
+  	RETURNS trigger AS $$
+	DECLARE
+ 		pos INTEGER;
+	BEGIN
+		select code INTO pos FROM POSITION WHERE name='merchandiser';
+		IF NOT EXISTS (select employer FROM EMPLOYER_TABLE WHERE position=pos and employer=NEW.merchandiser)
+			THEN RAISE EXCEPTION 'EMPLOYER IS NOT MERCHANDISER';
+		end if;
+		RETURN NEW;
+	END;
+	$$
+LANGUAGE 'plpgsql';
+
+CREATE OR REPLACE TRIGGER product_insert_trigger
+  	BEFORE INSERT ON PRODUCT
+  	FOR EACH ROW EXECUTE PROCEDURE product_insert_trigger_fnc();
+	
+	
+CREATE OR REPLACE FUNCTION product_table_insert_trigger_fnc()
+  	RETURNS trigger AS $$
+	DECLARE
+ 		pr INTEGER;
+	BEGIN
+		if not exists (select price from PRODUCT_IN_PRICELIST where product=NEW.product and 
+		pricelist=(select id from PRICELIST WHERE name='base')) then
+			RAISE EXCEPTION 'PRODUCT HAS NOT PRICE';
+		end if;
+		
+		select price INTO pr FROM PRODUCT_IN_PRICELIST WHERE product=NEW.product AND
+		pricelist=(select id from PRICELIST WHERE date=(select max(date) from PRICELIST where 
+		name='base' and id = (select id from product_in_pricelist where product = new.product)));
+				   
+		if NEW.price<=0 THEN RAISE EXCEPTION 'INCORRECT PRICE';
+		end if;
+		if NEW.price<0.5*pr THEN NEW.price:=0.5*pr;
+		end if;	
+		if NEW.price>1.5*pr THEN NEW.price:=1.5*pr;
+		END if;
+		
+		if new.price = null then
+			select price INTO pr FROM PRODUCT_IN_PRICELIST WHERE product=NEW.product AND
+			pricelist=(select id from PRICELIST 
+					   WHERE id = (select pricelist from buyer 
+								   where id = (select buyer from consignment
+											   where id = new.consignment)));
+			new.price:=round(pr*(100-sale)/100.0);
+		end if;
+		
+		select count INTO pr FROM PRODUCT WHERE articul=NEW.product;
+		if NEW.count>pr THEN RAISE EXCEPTION 'TOO BIG COUNT';
+		END IF;
+		
+		update product set count = (select count from product where articul = new.product)-new.count where articul = new.product;
+		RETURN NEW;
+	END;
+	$$
+LANGUAGE 'plpgsql';
+
+CREATE OR REPLACE TRIGGER product_table_insert_trigger
+  	BEFORE INSERT ON PRODUCT_TABLE
+  	FOR EACH ROW EXECUTE PROCEDURE product_table_insert_trigger_fnc();
+	
+
+
+CREATE OR REPLACE FUNCTION document_insert_trigger_fnc()
+  	RETURNS trigger AS $$
+	DECLARE
+ 		pos INTEGER;
+		pr INTEGER;
+		fp INTEGER;
+	BEGIN
+		select code INTO pos FROM POSITION WHERE name='cassir';
+		IF NOT EXISTS (select employer FROM EMPLOYER_TABLE WHERE position=pos and employer=NEW.cassir)
+			THEN RAISE EXCEPTION 'EMPLOYER IS NOT CASSIR';
+		end if;
+		select into pr sum(payment) from DOCUMENT where consignment=new.consignment;
+		SELECT INTO fp final_price from CONSIGNMENT WHERE id=new.consignment;
+		if pr+new.payment>fp then RAISE EXCEPTION 'TOO BIG PAYMENT FOR THIS CONSIGNMENT';
+		END IF;
+		RETURN NEW;
+	END;
+	$$
+LANGUAGE 'plpgsql';
+
+CREATE OR REPLACE TRIGGER document_insert_trigger
+  	BEFORE INSERT on document
+  	FOR EACH ROW EXECUTE PROCEDURE document_insert_trigger_fnc();
+	
+	
