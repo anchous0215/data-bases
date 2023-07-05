@@ -1,0 +1,275 @@
+/*1*/
+with temp_table1 as(
+	SELECT pricelist_category as id, count(pay_date) as pay_count, COUNT(id) as count_consignment
+	FROM consignment
+	GROUP BY pricelist_category
+	ORDER BY count_consignment DESC
+),
+temp_table2 as(
+	select (pricelist.id), 
+		(pricelist.name) as name, 
+		(pay_count) as pay_count, 
+		(count_consignment) as count_consignment, 
+		buyer from pricelist
+	inner join temp_table1 using(id)
+	inner join consignment on(consignment.pricelist_category = pricelist.id)
+),
+temp_table3 as(
+	SELECT count(id) as B, pricelist from buyer
+	GROUP BY pricelist
+),
+temp_table4 as(
+	select max(count_consignment) as maxc from temp_table2
+)
+select temp_table2.id as pricelist, 
+	max(name) as name, 
+	round(avg(pay_count), 0) as pay_count, 
+	round(avg(count_consignment), 0) as count_consignment,
+	round(count(buyer), 0) as A,
+	round(avg(B), 0) as B, 
+	round(count(buyer)/avg(B), 2) as part from temp_table2
+inner join temp_table3 on (temp_table3.pricelist = temp_table2.id)
+inner join temp_table4 on (maxc = count_consignment)
+group by temp_table2.id
+
+
+
+/*2*/
+with temp_table1 as (
+	select product as articul, count(pricelist) as pricelistes_count, avg(price) as average_price
+	from product_in_pricelist
+	where exists (select 1 from pricelist where id = pricelist and date>=CURRENT_DATE-interval'6 month')
+	group by product
+),
+temp_table2 as(
+	SELECT product_table.product, MAX(consignment.discharge_date) AS last_date
+	FROM product_table
+	JOIN consignment
+	ON product_table.consignment = consignment.id
+	GROUP BY product_table.product
+)
+select articul, pricelistes_count, average_price, product_table.count as sell_count, product_table.count*product_table.price as all_sells_price, product_table.count*product_table.price - get_price*product_table.count as sum, last_date from product 
+left join temp_table1 using(articul) 
+left join product_table on product_table.product = temp_table1.articul
+left join temp_table2 on temp_table1.articul = temp_table2.product
+
+
+
+/*3*/
+with temp_table11 as(
+	select pricelist_category as pricelist, max(discharge_date) as maxd from consignment
+	group by pricelist_category
+),
+temp_table1 as(
+	select pricelist from temp_table11
+	where maxd<current_date - interval'6 month'
+),
+temp_table2 as(
+	select count(product) as products_count, pricelist from product_in_pricelist
+	group by pricelist
+),
+temp_table3 as(
+	select count(product) as differ_product, pricelist.id as pricelist
+	from product_table inner join consignment on (product_table.consignment = consignment.id)
+	inner join pricelist on (pricelist.id = consignment.pricelist_category)
+	group by pricelist.id
+), 
+temp_table4 as(
+	select count(buyer) as buyers_count, max(discharge_date) as last_date, pricelist_category as pricelist from consignment
+	group by pricelist_category
+)
+select temp_table2.pricelist, products_count, differ_product, buyers_count, last_date from temp_table2 
+inner join temp_table1 using(pricelist)
+left join temp_table3 using(pricelist)
+left join temp_table4 using (pricelist)
+
+
+
+/*4*/
+with temp_table1 as(
+	select id from consignment where discharge_date>current_date-interval'6 month'
+),
+temp_table2 as(
+	SELECT product, SUM(count) AS sells_count, sum(count*price) as sells_sum
+	FROM temp_table1
+	left JOIN product_table
+	ON temp_table1.id = product_table.consignment
+	GROUP BY product
+),
+temp_table3 as (
+	select max(discharge_date), min(discharge_date), product from product_table
+	inner join consignment on (id = consignment)
+	inner join temp_table1 using (id)
+	group by product
+)
+select name, product.count, sells_count, sells_sum, sells_count::numeric/(max-min+1) as avg_days, product.count/(sells_count::numeric/(max-min+1)) days from product
+left join temp_table2 on (product.articul = temp_table2.product)
+left join temp_table3 using(product)
+
+
+
+/*5*/ 
+explain analyze
+with temple_table1 as(
+	select gs::date
+		from generate_series('2023-01-01', '2023-12-01', interval '1 month') as gs
+), 
+temple_table2 as(
+	select fio, id FROM EMPLOYER_TABLE 
+	inner join employer on (employer = id)
+		WHERE position = (select code FROM POSITION WHERE name='manager')
+),
+temple_table3 as(
+	select extract(month from gs) as mt, discharge_date, manager, id from consignment
+	inner join temple_table1 on (discharge_date>=gs and discharge_date<gs+interval'1 month')
+),
+temp_table4 as(
+	select COALESCE(sum(count*price), 0) as sells_sum, sum(count) as product_sum, id, max(count) as pp from product_table
+	right join temple_table3 on (consignment = id)
+	group by id
+),
+t1 as(
+	SELECT EXTRACT(MONTH FROM c.discharge_date) AS месяц, c.manager, t.product, SUM(t.count) AS сумма_count, COALESCE(sum(t.count*price), 0) as ss
+	FROM consignment c
+	JOIN product_table t ON c.id = t.consignment
+	WHERE EXTRACT(YEAR FROM c.discharge_date) = 2023
+	GROUP BY EXTRACT(MONTH FROM c.discharge_date), c.manager, t.product
+	ORDER BY EXTRACT(MONTH FROM c.discharge_date), c.manager
+), 
+t2 as(
+	SELECT месяц, manager,max(сумма_count)
+	FROM t1
+	GROUP BY месяц, manager
+),
+t3 as(
+	select t2.месяц, t2.manager, max(product) from t1
+	inner join t2 on(t1.месяц = t2.месяц and t1.manager = t2.manager and t1.сумма_count = t2.max)
+	GROUP BY t2.месяц, t2.manager
+),
+t4 as(
+	SELECT месяц, manager,max(ss)
+	FROM t1
+	GROUP BY месяц, manager
+),
+t5 as(
+	select t4.месяц, t4.manager, max(product) from t1
+	inner join t4 on(t1.месяц = t4.месяц and t1.manager = t4.manager and t1.ss = t4.max)
+	GROUP BY t4.месяц, t4.manager
+),
+t6 as(
+	select месяц, manager, sum(ss) from t1
+	group by месяц, manager
+),
+t7 as(
+	SELECT manager, "месяц", 
+       (100.0 * (sum - LAG(sum) OVER (PARTITION BY manager ORDER BY "месяц"))) / LAG(sum) OVER (PARTITION BY manager ORDER BY "месяц") AS adding
+	FROM t6
+	ORDER BY manager, "месяц"
+)
+	select m, fio, count(discharge_date), COALESCE(sum(sells_sum), 0) as sells_sum, COALESCE(sum(product_sum), 0) as product_sum, COALESCE(max(t3.max), 0) as pop_prod, COALESCE(max(t5.max), 0) as pop_sell_prod, avg(adding) as adding from generate_series(1, 12, 1) as m
+	cross join  temple_table2
+	left join temple_table3 on (manager = temple_table2.id and m = mt)
+	left join temp_table4 on (temp_table4.id = temple_table3.id)
+	left join t3 on(месяц = m and t3.manager = temple_table2.id)
+	left join t5 on(t5.месяц = m and t5.manager = temple_table2.id)
+	left join t7 on(t7.месяц = m and t7.manager = temple_table2.id)
+	group by m, fio
+	order by m, fio
+
+
+
+
+explain analyze
+WITH temple_table1 AS (
+    SELECT gs::date
+    FROM generate_series('2023-01-01', '2023-12-01', interval '1 month') AS gs
+), 
+temple_table2 AS (
+    SELECT fio, id
+    FROM EMPLOYER_TABLE 
+    INNER JOIN employer ON (employer = id)
+    WHERE position = (SELECT code FROM POSITION WHERE name = 'manager')
+),
+temple_table3 AS (
+    SELECT extract(month FROM gs) AS mt, c.discharge_date, c.manager, c.id
+    FROM consignment c
+    INNER JOIN temple_table1 ON (c.discharge_date >= gs AND c.discharge_date < gs + interval '1 month')
+),
+temp_table4 AS (
+    SELECT COALESCE(sum(p.count * p.price), 0) AS sells_sum, sum(p.count) AS product_sum, c.id, max(p.count) AS pp
+    FROM product_table p
+    RIGHT JOIN temple_table3 c ON p.consignment = c.id
+    GROUP BY c.id
+),
+t1 AS (
+    SELECT EXTRACT(MONTH FROM c.discharge_date) AS месяц, c.manager, t.product, SUM(t.count) AS сумма_count, COALESCE(sum(t.count * price), 0) AS ss
+    FROM consignment c
+    JOIN product_table t ON c.id = t.consignment
+    WHERE EXTRACT(YEAR FROM c.discharge_date) = 2023
+    GROUP BY EXTRACT(MONTH FROM c.discharge_date), c.manager, t.product
+    ORDER BY EXTRACT(MONTH FROM c.discharge_date), c.manager
+), 
+t2 AS (
+    SELECT месяц, manager, max(сумма_count)
+    FROM t1
+    GROUP BY месяц, manager
+),
+t3 AS (
+    SELECT t2.месяц, t2.manager, max(product) FROM t1
+    INNER JOIN t2 ON(t1.месяц = t2.месяц AND t1.manager = t2.manager AND t1.сумма_count = t2.max)
+    GROUP BY t2.месяц, t2.manager
+),
+t4 AS (
+    SELECT месяц, manager, max(ss)
+    FROM t1
+    GROUP BY месяц, manager
+),
+t5 AS (
+    SELECT t4.месяц, t4.manager, max(product) FROM t1
+    INNER JOIN t4 ON(t1.месяц = t4.месяц AND t1.manager = t4.manager AND t1.ss = t4.max)
+    GROUP BY t4.месяц, t4.manager
+),
+t6 AS (
+    SELECT месяц, manager, sum(ss) FROM t1
+    GROUP BY месяц, manager
+),
+t7 AS (
+    SELECT manager, "месяц", 
+    (100.0 * (sum - LAG(sum) OVER (PARTITION BY manager ORDER BY "месяц"))) / LAG(sum) OVER (PARTITION BY manager ORDER BY "месяц") AS adding
+    FROM t6
+    ORDER BY manager, "месяц"
+)
+SELECT m, fio, count(discharge_date), COALESCE(sum(sells_sum), 0) AS sells_sum, COALESCE(sum(product_sum), 0) AS product_sum, COALESCE(max(t3.max), 0) AS pop_prod, COALESCE(max(t5.max), 0) AS pop_sell_prod, avg(adding) AS adding
+FROM generate_series(1, 12, 1) AS m
+CROSS JOIN temple_table2
+LEFT JOIN temple_table3 ON (manager = temple_table2.id AND m = mt)
+LEFT JOIN temp_table4 ON (temp_table4.id = temple_table3.id)
+LEFT JOIN t3 ON(месяц = m AND t3.manager = temple_table2.id)
+LEFT JOIN t5 ON(t5.месяц = m AND t5.manager = temple_table2.id)
+LEFT JOIN t7 ON(t7.месяц = m AND t7.manager = temple_table2.id)
+GROUP BY m, fio
+ORDER BY m, fio;
+
+
+
+
+select* from consignment
+update consignment set discharge_date = '2023-2-1' where id = 2;
+update consignment set pricelist_category = 8 where buyer = 6
+	
+select * from consignment c join product_table pt on c.id = pt.consignment; 
+select* from product_table
+select* from position
+select* from product_in_pricelist
+select* from pricelist
+select* from individual
+select* from employer_table
+delete from consignment where pricelist_category !=7
+
+update consignment set discharge_date = '2022-01-01' where id < 10;
+insert into employer_table values (5, 2)
+insert into pricelist (id, director, name, date) values (3, 1, 'individ')
+insert into buyer values (1, false, 3, 8)
+insert into individual values (1, 'g', 'g', 'g', 'g', 'м', '2002-01-20', '0000002222', '+78654321345')
+delete from consignment where id = 3
+update consignment set discharge_date = '2023-01-03' where id = 10
